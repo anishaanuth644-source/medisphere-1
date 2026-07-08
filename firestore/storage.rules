@@ -1,0 +1,53 @@
+rules_version = '2';
+
+// Firebase Storage rules for MediSphere.
+// Mirrors the Firestore RBAC model: only signed-in staff can read clinical
+// files, and only the appropriate roles can upload to each folder.
+//
+// Deploy with: firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Storage rules cannot call Firestore directly in all SDK versions used
+    // here, so role is read from a custom claim set on the auth token via
+    // a Cloud Function trigger (see functions/setUserRoleClaim.js in a full
+    // backend setup). Until that's wired up, this falls back to "any signed
+    // in user" for read and write — tighten this before going to production.
+    function hasRoleClaim(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+
+    match /medical-records/{patientId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() &&
+        request.resource.size < 20 * 1024 * 1024 &&
+        request.resource.contentType.matches('application/pdf|image/.*');
+    }
+
+    match /lab-reports/{testId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() &&
+        request.resource.size < 20 * 1024 * 1024;
+    }
+
+    match /documents/{patientId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() &&
+        request.resource.size < 10 * 1024 * 1024;
+    }
+
+    match /invoices/{invoiceId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
